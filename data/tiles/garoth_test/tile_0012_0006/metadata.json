@@ -1,0 +1,31 @@
+{
+  "tile_id": "tile_0012_0006",
+  "row": 12,
+  "column": 6,
+  "center": {
+    "lat": 24.335272066407928,
+    "lon": 75.60774203459896
+  },
+  "bounds": {
+    "north": 24.33753976856406,
+    "south": 24.33300433963654,
+    "east": 75.61021707996207,
+    "west": 75.60526707706904
+  },
+  "area": {
+    "tile_area_m2": 250000.0,
+    "district_area_m2": 250000.0,
+    "coverage_ratio": 1.0
+  },
+  "status": "pending",
+  "files": {
+    "screenshot": null,
+    "input": null,
+    "probability": null,
+    "mask": null,
+    "mask_refined": null,
+    "polygon_raw": null,
+    "polygon_refined": null,
+    "prediction": null
+  }
+}
