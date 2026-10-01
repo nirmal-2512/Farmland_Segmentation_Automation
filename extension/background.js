@@ -1,6 +1,8 @@
 console.log('Farmland Boundary Detector background service worker loaded.');
 
+
 const FASTAPI_URL = 'http://localhost:8000';
+
 
 const TEST_TILE = {
   tile_id: 'tile_0000_0000',
@@ -18,13 +20,18 @@ const TEST_TILE = {
   }
 };
 
+
 const TARGET_ZOOM = 18;
+
 
 const CENTER_TOLERANCE = 0.00005;
 
+
 const PAGE_LOAD_WAIT_MS = 5000;
 
+
 const IMAGERY_WAIT_MS = 5000;
+
 
 const MAX_NAVIGATION_ATTEMPTS = 3;
 
@@ -94,7 +101,6 @@ function waitForTabLoad(tabId) {
   return new Promise(resolve => {
 
     let finished = false;
-
     let timeout = null;
 
 
@@ -106,13 +112,16 @@ function waitForTabLoad(tabId) {
 
       finished = true;
 
+
       if (timeout) {
         clearTimeout(timeout);
       }
 
+
       chrome.tabs.onUpdated.removeListener(
         listener
       );
+
 
       resolve();
     }
@@ -146,6 +155,7 @@ function waitForTabLoad(tabId) {
       finish();
 
     }, 20000);
+
   });
 }
 
@@ -183,10 +193,12 @@ async function executeTabScript(
         success: false,
         message: 'No script result.'
       };
+
     }
 
 
     return results[0].result;
+
 
   } catch (error) {
 
@@ -196,7 +208,9 @@ async function executeTabScript(
         error.message ||
         String(error)
     };
+
   }
+
 }
 
 
@@ -217,65 +231,106 @@ async function getMapState(tabId) {
 
     () => {
 
+      /*
+       * --------------------------------------------------------
+       * PARSE GOOGLE MAPS URL
+       * --------------------------------------------------------
+       *
+       * Google Maps may rewrite:
+       *
+       *   /@lat,lng,18z
+       *
+       * into:
+       *
+       *   /@lat,lng,...
+       *
+       * without a zoom value.
+       *
+       * Therefore zoom is optional here.
+       */
+
       function parseUrlCenterZoom(url) {
 
         /*
-         * Standard @lat,lng,zoomz format
-         */
+        * ==========================================================
+        * GOOGLE MAPS @ LAT,LNG FORMAT
+        * ==========================================================
+        *
+        * Google Maps commonly rewrites the URL to something like:
+        *
+        * https://www.google.com/maps/@24.2811988,75.5779256,...
+        *
+        * or:
+        *
+        * https://www.google.com/maps/@24.2811988,75.5779256,18z
+        *
+        * Zoom may be omitted, so it is optional.
+        */
 
-        const atMatch =
-          url.match(
-            /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?:,(\d+(?:\.\d+)?)z)?/
-          );
+        const atMatch = url.match(
+          /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?:,(\d+(?:\.\d+)?)z)?/
+        );
 
 
         if (atMatch) {
 
+          const latitude =
+            parseFloat(atMatch[1]);
+
+          const longitude =
+            parseFloat(atMatch[2]);
+
+          const zoom =
+            atMatch[3] !== undefined
+              ? parseFloat(atMatch[3])
+              : 18;
+
+
+          console.log(
+            '[Automation] Parsed Google Maps URL:',
+            {
+              url,
+              latitude,
+              longitude,
+              zoom,
+              rawMatch: atMatch
+            }
+          );
+
+
           return {
+
             lat:
-              parseFloat(
-                atMatch[1]
-              ),
+              latitude,
 
             lng:
-              parseFloat(
-                atMatch[2]
-              ),
+              longitude,
 
             zoom:
-              parseFloat(
-                atMatch[3]
-              )
+              zoom
+
           };
+
         }
 
 
         /*
-         * API=1 map URL.
-         *
-         * Example:
-         *
-         * /maps/@?api=1&map_action=map
-         * &center=24.28,75.57
-         * &zoom=18
-         */
+        * ==========================================================
+        * API=1 CENTER PARAMETER
+        * ==========================================================
+        */
 
-        const centerMatch =
-          url.match(
-            /[?&]center=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/
-          );
+        const centerMatch = url.match(
+          /[?&]center=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/
+        );
 
 
-        const zoomMatch =
-          url.match(
-            /[?&]zoom=(\d+(?:\.\d+)?)/
-          );
+        const zoomMatch = url.match(
+          /[?&]zoom=(\d+(?:\.\d+)?)/
+        );
 
 
-        if (
-          centerMatch &&
-          zoomMatch
-        ) {
+        if (centerMatch) {
 
           return {
 
@@ -290,33 +345,34 @@ async function getMapState(tabId) {
               ),
 
             zoom:
-              parseFloat(
-                zoomMatch[1]
-              )
+              zoomMatch
+                ? parseFloat(
+                    zoomMatch[1]
+                  )
+                : 18
+
           };
+
         }
 
 
         /*
-         * Google Maps query parameters.
-         */
+        * ==========================================================
+        * GOOGLE MAPS QUERY PARAMETERS
+        * ==========================================================
+        */
 
-        const llMatch =
-          url.match(
-            /[?&](?:center|ll)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/
-          );
-
-
-        const queryZoomMatch =
-          url.match(
-            /[?&](?:zoom|z)=(\d+(?:\.\d+)?)/
-          );
+        const llMatch = url.match(
+          /[?&](?:center|ll)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/
+        );
 
 
-        if (
-          llMatch &&
-          queryZoomMatch
-        ) {
+        const queryZoomMatch = url.match(
+          /[?&](?:zoom|z)=(\d+(?:\.\d+)?)/
+        );
+
+
+        if (llMatch) {
 
           return {
 
@@ -331,21 +387,26 @@ async function getMapState(tabId) {
               ),
 
             zoom:
-              parseFloat(
-                queryZoomMatch[1]
-              )
+              queryZoomMatch
+                ? parseFloat(
+                    queryZoomMatch[1]
+                  )
+                : 18
+
           };
+
         }
 
 
         /*
-         * Google Maps place URL fallback.
-         */
+        * ==========================================================
+        * GOOGLE MAPS PLACE URL FALLBACK
+        * ==========================================================
+        */
 
-        const gmapMatch =
-          url.match(
-            /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/
-          );
+        const gmapMatch = url.match(
+          /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/
+        );
 
 
         if (gmapMatch) {
@@ -363,18 +424,21 @@ async function getMapState(tabId) {
               ),
 
             zoom: 18
+
           };
+
         }
 
 
         /*
-         * Hash format.
-         */
+        * ==========================================================
+        * HASH FORMAT
+        * ==========================================================
+        */
 
-        const hashMatch =
-          url.match(
-            /#@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?)z/
-          );
+        const hashMatch = url.match(
+          /#@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?)z/
+        );
 
 
         if (hashMatch) {
@@ -391,17 +455,25 @@ async function getMapState(tabId) {
                 hashMatch[2]
               ),
 
-              zoom:
-                atMatch[3]
-                  ? parseFloat(atMatch[3])
-                  : null
+            zoom:
+              parseFloat(
+                hashMatch[3]
+              )
+
           };
+
         }
 
 
         return null;
+
       }
 
+      /*
+       * --------------------------------------------------------
+       * GET MAP RECTANGLE
+       * --------------------------------------------------------
+       */
 
       function getMapRect() {
 
@@ -429,7 +501,10 @@ async function getMapState(tabId) {
 
           const best =
             canvasCandidates.reduce(
-              (previous, current) => {
+              (
+                previous,
+                current
+              ) => {
 
                 const previousArea =
                   previous.rect.width *
@@ -445,6 +520,7 @@ async function getMapState(tabId) {
                   previousArea
                   ? current
                   : previous;
+
               }
             );
 
@@ -492,8 +568,11 @@ async function getMapState(tabId) {
                   Math.ceil(
                     panelRect.right
                   );
+
               }
+
             }
+
           }
 
 
@@ -509,7 +588,7 @@ async function getMapState(tabId) {
               Math.max(
                 1,
                 rect.width -
-                sidebarWidth
+                  sidebarWidth
               ),
 
             height:
@@ -517,9 +596,15 @@ async function getMapState(tabId) {
                 1,
                 rect.height
               )
+
           };
+
         }
 
+
+        /*
+         * Fallback viewport.
+         */
 
         return {
 
@@ -530,7 +615,8 @@ async function getMapState(tabId) {
           width:
             Math.max(
               1,
-              window.innerWidth - 80
+              window.innerWidth -
+                80
             ),
 
           height:
@@ -538,7 +624,9 @@ async function getMapState(tabId) {
               1,
               window.innerHeight
             )
+
         };
+
       }
 
 
@@ -564,7 +652,9 @@ async function getMapState(tabId) {
             'Could not determine map center from URL.',
 
           url
+
         };
+
       }
 
 
@@ -581,6 +671,7 @@ async function getMapState(tabId) {
 
           lng:
             centerZoom.lng
+
         },
 
         zoom:
@@ -591,23 +682,34 @@ async function getMapState(tabId) {
         physicalWidth:
           Math.round(
             mapRect.width *
-            (window.devicePixelRatio || 1)
+            (
+              window.devicePixelRatio ||
+              1
+            )
           ),
 
         physicalHeight:
           Math.round(
             mapRect.height *
-            (window.devicePixelRatio || 1)
+            (
+              window.devicePixelRatio ||
+              1
+            )
           ),
 
         devicePixelRatio:
-          window.devicePixelRatio || 1,
+          window.devicePixelRatio ||
+          1,
 
         pageTitle:
           document.title
+
       };
+
     }
+
   );
+
 }
 
 
@@ -635,7 +737,9 @@ function getCenterDifference(
         actual.lng -
         target.lon
       )
+
   };
+
 }
 
 
@@ -649,7 +753,9 @@ function isCenterCorrect(
     typeof actual.lat !== 'number' ||
     typeof actual.lng !== 'number'
   ) {
+
     return false;
+
   }
 
 
@@ -663,9 +769,11 @@ function isCenterCorrect(
   return (
     difference.latitude <=
       CENTER_TOLERANCE &&
+
     difference.longitude <=
       CENTER_TOLERANCE
   );
+
 }
 
 
@@ -698,6 +806,7 @@ function buildMapUrl(tile) {
     `&zoom=${TARGET_ZOOM}` +
     '&basemap=satellite'
   );
+
 }
 
 
@@ -784,11 +893,18 @@ async function navigateToTile(
       );
 
 
-    console.log(
-      `Map state after attempt ${attempt}:`,
-      mapState
-    );
+      console.log(
+        '[Automation] EXACT MAP RECT:',
+        JSON.stringify(mapState.mapRect, null, 2)
+      );
 
+      console.log(
+        '[Automation] SCREENSHOT DIMENSIONS:',
+        JSON.stringify({
+          width: mapState.physicalWidth,
+          height: mapState.physicalHeight
+        }, null, 2)
+      );
 
     if (
       mapState &&
@@ -834,10 +950,16 @@ async function navigateToTile(
 
 
         return {
+
           success: true,
+
           mapState,
-          attempts: attempt
+
+          attempts:
+            attempt
+
         };
+
       }
 
 
@@ -852,12 +974,14 @@ async function navigateToTile(
         'retrying',
         'Could not read map center. Retrying navigation.'
       );
+
     }
 
 
     await sleep(
       2000
     );
+
   }
 
 
@@ -867,7 +991,9 @@ async function navigateToTile(
 
     message:
       'Unable to verify that Google Maps reached the requested tile.'
+
   };
+
 }
 
 
@@ -901,16 +1027,43 @@ async function captureScreenshot(
     throw new Error(
       'Screenshot capture returned empty result.'
     );
+
   }
 
 
   return screenshot;
+
 }
 
 
 /*
  * ============================================================
  * UPLOAD SCREENSHOT TO FASTAPI
+ * ============================================================
+ *
+ * FastAPI endpoint:
+ *
+ * POST /automation/save-screenshot
+ *
+ * Required fields:
+ *
+ * file
+ * job_id
+ * tile_id
+ * requested_lat
+ * requested_lng
+ * actual_lat
+ * actual_lng
+ * zoom
+ * tile_north
+ * tile_south
+ * tile_east
+ * tile_west
+ *
+ * Optional:
+ *
+ * map_width
+ * map_height
  * ============================================================
  */
 
@@ -926,24 +1079,65 @@ async function uploadScreenshot(
   );
 
 
+  /*
+   * Convert the captured data URL
+   * into a Blob.
+   */
+
   const response =
     await fetch(
       screenshotDataUrl
     );
 
 
+  if (!response.ok) {
+
+    throw new Error(
+      `Could not convert screenshot data URL to Blob: ${response.status}`
+    );
+
+  }
+
+
   const blob =
     await response.blob();
 
+
+  if (!blob || blob.size === 0) {
+
+    throw new Error(
+      'Screenshot Blob is empty.'
+    );
+
+  }
+
+
+  /*
+   * Create multipart form data.
+   */
 
   const formData =
     new FormData();
 
 
+  /*
+   * Screenshot file.
+   */
+
   formData.append(
     'file',
     blob,
     `${tile.tile_id}.png`
+  );
+
+
+  /*
+   * Job information.
+   */
+
+  formData.append(
+    'job_id',
+    'garoth_test'
   );
 
 
@@ -953,14 +1147,14 @@ async function uploadScreenshot(
   );
 
 
-  formData.append(
-    'job_id',
-    'garoth_test'
-  );
+  /*
+   * Requested center.
+   *
+   * Exact FastAPI field names.
+   */
 
-
   formData.append(
-    'center_lat',
+    'requested_lat',
     String(
       tile.center.lat
     )
@@ -968,15 +1162,21 @@ async function uploadScreenshot(
 
 
   formData.append(
-    'center_lon',
+    'requested_lng',
     String(
       tile.center.lon
     )
   );
 
 
+  /*
+   * Actual Google Maps center.
+   *
+   * Exact FastAPI field names.
+   */
+
   formData.append(
-    'map_lat',
+    'actual_lat',
     String(
       mapState.center.lat
     )
@@ -984,23 +1184,45 @@ async function uploadScreenshot(
 
 
   formData.append(
-    'map_lon',
+    'actual_lng',
     String(
       mapState.center.lng
     )
   );
 
 
+  /*
+   * Zoom.
+   *
+   * Google Maps may omit zoom from its rewritten URL,
+   * so getMapState() falls back to TARGET_ZOOM.
+   */
+
+  const uploadZoom =
+    (
+      typeof mapState.zoom === 'number' &&
+      Number.isFinite(mapState.zoom)
+    )
+      ? mapState.zoom
+      : TARGET_ZOOM;
+
+
   formData.append(
     'zoom',
     String(
-      mapState.zoom
+      uploadZoom
     )
   );
 
 
+  /*
+   * Tile geographic bounds.
+   *
+   * Exact FastAPI field names.
+   */
+
   formData.append(
-    'north',
+    'tile_north',
     String(
       tile.bounds.north
     )
@@ -1008,7 +1230,7 @@ async function uploadScreenshot(
 
 
   formData.append(
-    'south',
+    'tile_south',
     String(
       tile.bounds.south
     )
@@ -1016,7 +1238,7 @@ async function uploadScreenshot(
 
 
   formData.append(
-    'east',
+    'tile_east',
     String(
       tile.bounds.east
     )
@@ -1024,12 +1246,16 @@ async function uploadScreenshot(
 
 
   formData.append(
-    'west',
+    'tile_west',
     String(
       tile.bounds.west
     )
   );
 
+
+  /*
+   * Physical map dimensions.
+   */
 
   formData.append(
     'map_width',
@@ -1047,6 +1273,59 @@ async function uploadScreenshot(
   );
 
 
+  /*
+   * Debug log before upload.
+   */
+
+  console.log(
+    '[Automation] Upload metadata:',
+    {
+      job_id: 'garoth_test',
+      tile_id: tile.tile_id,
+
+      requested_lat:
+        tile.center.lat,
+
+      requested_lng:
+        tile.center.lon,
+
+      actual_lat:
+        mapState.center.lat,
+
+      actual_lng:
+        mapState.center.lng,
+
+      zoom:
+        uploadZoom,
+
+      tile_north:
+        tile.bounds.north,
+
+      tile_south:
+        tile.bounds.south,
+
+      tile_east:
+        tile.bounds.east,
+
+      tile_west:
+        tile.bounds.west,
+
+      map_width:
+        mapState.physicalWidth,
+
+      map_height:
+        mapState.physicalHeight,
+
+      screenshot_size_bytes:
+        blob.size
+    }
+  );
+
+
+  /*
+   * Send request to FastAPI.
+   */
+
   const saveResponse =
     await fetch(
       `${FASTAPI_URL}/automation/save-screenshot`,
@@ -1057,6 +1336,10 @@ async function uploadScreenshot(
     );
 
 
+  /*
+   * Handle HTTP error.
+   */
+
   if (!saveResponse.ok) {
 
     const errorText =
@@ -1066,25 +1349,55 @@ async function uploadScreenshot(
     throw new Error(
       `Screenshot save failed: ${saveResponse.status} ${errorText}`
     );
+
   }
 
 
-  const result =
-    await saveResponse.json();
+  /*
+   * Parse FastAPI JSON response.
+   */
 
+  let result;
+
+  try {
+
+    result =
+      await saveResponse.json();
+
+  } catch (error) {
+
+    throw new Error(
+      `FastAPI returned a non-JSON response after screenshot upload: ${error.message || String(error)}`
+    );
+
+  }
+
+
+  /*
+   * FastAPI must explicitly confirm success.
+   */
 
   if (
+    !result ||
     !result.success
   ) {
 
     throw new Error(
-      result.message ||
+      result?.message ||
       'FastAPI did not confirm screenshot save.'
     );
+
   }
 
 
+  console.log(
+    '[Automation] Screenshot saved successfully:',
+    result
+  );
+
+
   return result;
+
 }
 
 
@@ -1109,6 +1422,7 @@ async function runSingleTileAutomation(
 
     /*
      * STEP 1
+     *
      * Navigate and VERIFY.
      */
 
@@ -1126,6 +1440,7 @@ async function runSingleTileAutomation(
       throw new Error(
         navigationResult.message
       );
+
     }
 
 
@@ -1135,6 +1450,7 @@ async function runSingleTileAutomation(
 
     /*
      * STEP 2
+     *
      * Capture only after the map
      * has been verified.
      */
@@ -1147,6 +1463,7 @@ async function runSingleTileAutomation(
 
     /*
      * STEP 3
+     *
      * Upload automatically.
      */
 
@@ -1160,6 +1477,7 @@ async function runSingleTileAutomation(
 
     /*
      * STEP 4
+     *
      * Store test metadata in extension storage.
      */
 
@@ -1177,6 +1495,7 @@ async function runSingleTileAutomation(
 
       timestamp:
         new Date().toISOString()
+
     };
 
 
@@ -1184,6 +1503,7 @@ async function runSingleTileAutomation(
 
       automationTest:
         automationResult
+
     });
 
 
@@ -1201,13 +1521,16 @@ async function runSingleTileAutomation(
       '========================================'
     );
 
+
     console.log(
       'SINGLE TILE AUTOMATION COMPLETE'
     );
 
+
     console.log(
       '========================================'
     );
+
 
     console.log(
       automationResult
@@ -1239,8 +1562,11 @@ async function runSingleTileAutomation(
       error:
         error.message ||
         String(error)
+
     };
+
   }
+
 }
 
 
@@ -1261,7 +1587,9 @@ chrome.runtime.onMessage.addListener(
       !message ||
       !message.type
     ) {
+
       return;
+
     }
 
 
@@ -1289,8 +1617,13 @@ chrome.runtime.onMessage.addListener(
             );
 
             return;
+
           }
 
+
+          /*
+           * Make sure the user is on Google Maps.
+           */
 
           if (
             !tab.url ||
@@ -1313,6 +1646,7 @@ chrome.runtime.onMessage.addListener(
             );
 
             return;
+
           }
 
 
@@ -1320,20 +1654,27 @@ chrome.runtime.onMessage.addListener(
             tab.id,
             tab.windowId
           );
+
         }
       );
 
 
       sendResponse({
+
         success: true,
+
         message:
           'Automation started in background.'
+
       });
 
 
       return true;
+
     }
+
   }
+
 );
 
 
@@ -1354,6 +1695,7 @@ chrome.action.onClicked.addListener(
     ) {
 
       chrome.notifications.create({
+
         type: 'basic',
 
         iconUrl:
@@ -1364,7 +1706,10 @@ chrome.action.onClicked.addListener(
 
         message:
           'Please open Google Maps first.'
+
       });
+
     }
+
   }
 );

@@ -17,15 +17,31 @@
     "district_area_m2": 232276.77142854163,
     "coverage_ratio": 0.9291070857141666
   },
-  "status": "pending",
+  "status": "captured",
   "files": {
-    "screenshot": null,
+    "screenshot": "screenshot.png",
     "input": null,
     "probability": null,
     "mask": null,
     "mask_refined": null,
     "polygon_raw": null,
     "polygon_refined": null,
-    "prediction": null
+    "prediction": null,
+    "screenshot_metadata": "screenshot_metadata.json"
+  },
+  "capture": {
+    "captured_at_utc": "2026-10-01T05:33:06.364499Z",
+    "requested_center": {
+      "lat": 24.281198846744214,
+      "lng": 75.57792560550556
+    },
+    "actual_center": {
+      "lat": 24.2811988,
+      "lng": 75.5779256
+    },
+    "zoom": 18.0,
+    "center_error": 4.706732231755803e-08,
+    "image_width": 2880,
+    "image_height": 1570
   }
 }

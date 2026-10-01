@@ -1,0 +1,40 @@
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Large Model Weights
+*.pth
+*.onnx
+*.onnx.data
+models/*.pth
+models/*.onnx*
+
+# Generated Tile Data
+data/tiles/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Large Model Weights
+*.pth
+*.onnx
+*.onnx.data
+models/*.pth
+models/*.onnx*
+
+# Generated Tile Data
+data/tiles/
+
+# Virtual Environments
+.venv/
+venv/
+
+# Large Model Binaries
+*.pth
+*.onnx
+*.onnx.data
+models/
