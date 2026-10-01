@@ -9,16 +9,15 @@ from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import cv2
 
-from io import BytesIO
 import logging
 import os
 import json
-import re
+import base64
 
 from pathlib import Path
 from datetime import datetime
 
-import config
+from . import config
 from .inference import ONNXInference
 
 from .utils import (
@@ -36,7 +35,11 @@ from .utils import (
 # LOGGING
 # ============================================================
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +49,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="SegFormer-B2 Farmland Segmentation API",
-    description="Satellite image farmland boundary detection and GeoJSON export",
+    description=(
+        "Satellite image farmland boundary detection "
+        "and GeoJSON export"
+    ),
     version="2.1.0"
 )
 
@@ -71,15 +77,22 @@ app.add_middleware(
 ONNX_PATH = config.ONNX_MODEL_PATH
 
 try:
+
     inference = ONNXInference(
         ONNX_PATH,
         providers=config.INFERENCE_PROVIDERS
     )
 
-    logger.info("ONNX Model Loaded Successfully")
+    logger.info(
+        "ONNX Model Loaded Successfully"
+    )
 
 except Exception as e:
-    logger.error(f"Failed to load ONNX model: {e}")
+
+    logger.error(
+        f"Failed to load ONNX model: {e}"
+    )
+
     inference = None
 
 
@@ -87,38 +100,49 @@ except Exception as e:
 # PROJECT PATHS
 # ============================================================
 
-# main.py is located at:
+# main.py:
 #
 # Farmland_Segmentation_Automation/
 # └── backend/
 #     └── app/
 #         └── main.py
 #
-# Therefore:
 # parents[0] = app
 # parents[1] = backend
 # parents[2] = project root
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+APP_DIR = Path(__file__).resolve().parent
 
-DATA_ROOT = PROJECT_ROOT / "data"
+BACKEND_DIR = APP_DIR.parent
 
-TILES_ROOT = DATA_ROOT / "tiles"
+PROJECT_ROOT = BACKEND_DIR.parent
 
-JOBS_ROOT = DATA_ROOT / "jobs"
+DATA_DIR = PROJECT_ROOT / "data"
 
-LOGS_ROOT = DATA_ROOT / "logs"
+JOBS_DIR = DATA_DIR / "jobs"
+
+TILES_DIR = DATA_DIR / "tiles"
+
+MERGED_DIR = DATA_DIR / "merged"
+
+OUTPUT_DIR = DATA_DIR / "output"
+
+LOGS_DIR = DATA_DIR / "logs"
 
 
-# Make sure required directories exist
-TILES_ROOT.mkdir(parents=True, exist_ok=True)
-JOBS_ROOT.mkdir(parents=True, exist_ok=True)
-LOGS_ROOT.mkdir(parents=True, exist_ok=True)
-
-
-logger.info(f"Project root: {PROJECT_ROOT}")
-logger.info(f"Data root: {DATA_ROOT}")
-logger.info(f"Tiles root: {TILES_ROOT}")
+# Create important directories.
+for directory in [
+    DATA_DIR,
+    JOBS_DIR,
+    TILES_DIR,
+    MERGED_DIR,
+    OUTPUT_DIR,
+    LOGS_DIR
+]:
+    directory.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
 
 # ============================================================
@@ -127,23 +151,33 @@ logger.info(f"Tiles root: {TILES_ROOT}")
 
 def _create_debug_dir() -> Path:
     """
-    Create a timestamped debug output directory for each request.
+    Create a timestamped debug output directory.
+
+    Example:
+
+    backend/app/debug_outputs/
+        run_20261001_123456_123456/
     """
 
-    base_dir = Path(__file__).resolve().parent
-
-    debug_root = base_dir / "debug_outputs"
+    debug_root = (
+        APP_DIR /
+        "debug_outputs"
+    )
 
     debug_root.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    timestamp = datetime.utcnow().strftime(
-        "%Y%m%d_%H%M%S_%f"
+    timestamp = (
+        datetime.utcnow()
+        .strftime("%Y%m%d_%H%M%S_%f")
     )
 
-    run_dir = debug_root / f"run_{timestamp}"
+    run_dir = (
+        debug_root /
+        f"run_{timestamp}"
+    )
 
     run_dir.mkdir(
         parents=True,
@@ -161,21 +195,14 @@ def _save_debug_images(
     field_regions: np.ndarray
 ):
     """
-    Save all intermediate images to the debug folder.
+    Save intermediate inference images.
 
     Files:
 
     original.png
-        Raw image received from Chrome Extension.
-
     raw_mask.png
-        Raw model output scaled to 0-255.
-
     mask_binary.png
-        Thresholded model mask.
-
     field_regions.png
-        Field-region mask used for contour extraction.
     """
 
     # --------------------------------------------------------
@@ -183,32 +210,42 @@ def _save_debug_images(
     # --------------------------------------------------------
 
     cv2.imwrite(
-        str(run_dir / "original.png"),
+        str(
+            run_dir /
+            "original.png"
+        ),
         original
     )
 
     logger.info(
-        "  Saved: original.png"
+        "Saved debug image: original.png"
     )
 
 
     # --------------------------------------------------------
-    # 2. Raw model output
+    # 2. Raw probability mask
     # --------------------------------------------------------
 
     raw_visual = (
-        raw_mask * 255
+        np.clip(
+            raw_mask,
+            0.0,
+            1.0
+        ) * 255
     ).astype(np.uint8)
 
     cv2.imwrite(
-        str(run_dir / "raw_mask.png"),
+        str(
+            run_dir /
+            "raw_mask.png"
+        ),
         raw_visual
     )
 
     logger.info(
-        f"  Saved: raw_mask.png "
-        f"[min={raw_mask.min():.3f} "
-        f"max={raw_mask.max():.3f} "
+        "Saved debug image: raw_mask.png "
+        f"[min={raw_mask.min():.3f}, "
+        f"max={raw_mask.max():.3f}, "
         f"mean={raw_mask.mean():.3f}]"
     )
 
@@ -218,12 +255,15 @@ def _save_debug_images(
     # --------------------------------------------------------
 
     cv2.imwrite(
-        str(run_dir / "mask_binary.png"),
+        str(
+            run_dir /
+            "mask_binary.png"
+        ),
         mask_binary
     )
 
     logger.info(
-        "  Saved: mask_binary.png"
+        "Saved debug image: mask_binary.png"
     )
 
 
@@ -232,72 +272,221 @@ def _save_debug_images(
     # --------------------------------------------------------
 
     cv2.imwrite(
-        str(run_dir / "field_regions.png"),
+        str(
+            run_dir /
+            "field_regions.png"
+        ),
         field_regions
     )
 
     logger.info(
-        "  Saved: field_regions.png"
+        "Saved debug image: field_regions.png"
+    )
+
+
+# ============================================================
+# AUTOMATION TILE DIRECTORY
+# ============================================================
+
+def _get_tile_dir(
+    job_id: str | None,
+    tile_id: str | None
+) -> Path | None:
+    """
+    Return automation tile directory.
+
+    Example:
+
+    data/
+        tiles/
+            garoth_test/
+                tile_0000_0000/
+    """
+
+    if not job_id or not tile_id:
+        return None
+
+
+    # Prevent accidental path traversal.
+    safe_job_id = Path(
+        job_id
+    ).name
+
+    safe_tile_id = Path(
+        tile_id
+    ).name
+
+
+    tile_dir = (
+        TILES_DIR /
+        safe_job_id /
+        safe_tile_id
+    )
+
+
+    tile_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+
+    return tile_dir
+
+
+# ============================================================
+# SAVE TILE METADATA
+# ============================================================
+
+def _save_json(
+    path: Path,
+    data
+):
+    """
+    Save JSON with readable formatting.
+    """
+
+    with open(
+        path,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            data,
+            f,
+            indent=2,
+            ensure_ascii=False
+        )
+
+
+# ============================================================
+# SAVE AUTOMATION PREDICTION ARTIFACTS
+# ============================================================
+
+def _save_tile_prediction_artifacts(
+    tile_dir: Path,
+    image: np.ndarray,
+    probability_mask: np.ndarray,
+    binary_mask: np.ndarray,
+    field_mask: np.ndarray,
+    overlay: np.ndarray,
+    geojson_data: dict,
+    metadata: dict
+):
+    """
+    Save all prediction artifacts for one automation tile.
+
+    Expected directory:
+
+    data/tiles/<job_id>/<tile_id>/
+
+        input.png
+        probability.png
+        mask.png
+        mask_refined.png
+        contours_overlay.png
+        prediction.geojson
+        prediction_metadata.json
+    """
+
+    # --------------------------------------------------------
+    # input.png
+    # --------------------------------------------------------
+
+    cv2.imwrite(
+        str(
+            tile_dir /
+            "input.png"
+        ),
+        image
+    )
+
+
+    # --------------------------------------------------------
+    # probability.png
+    # --------------------------------------------------------
+
+    probability_visual = (
+        np.clip(
+            probability_mask,
+            0.0,
+            1.0
+        ) * 255
+    ).astype(np.uint8)
+
+    cv2.imwrite(
+        str(
+            tile_dir /
+            "probability.png"
+        ),
+        probability_visual
+    )
+
+
+    # --------------------------------------------------------
+    # mask.png
+    # --------------------------------------------------------
+
+    cv2.imwrite(
+        str(
+            tile_dir /
+            "mask.png"
+        ),
+        binary_mask
+    )
+
+
+    # --------------------------------------------------------
+    # mask_refined.png
+    # --------------------------------------------------------
+
+    cv2.imwrite(
+        str(
+            tile_dir /
+            "mask_refined.png"
+        ),
+        field_mask
+    )
+
+
+    # --------------------------------------------------------
+    # contours_overlay.png
+    # --------------------------------------------------------
+
+    cv2.imwrite(
+        str(
+            tile_dir /
+            "contours_overlay.png"
+        ),
+        overlay
+    )
+
+
+    # --------------------------------------------------------
+    # prediction.geojson
+    # --------------------------------------------------------
+
+    _save_json(
+        tile_dir /
+        "prediction.geojson",
+        geojson_data
+    )
+
+
+    # --------------------------------------------------------
+    # prediction_metadata.json
+    # --------------------------------------------------------
+
+    _save_json(
+        tile_dir /
+        "prediction_metadata.json",
+        metadata
     )
 
 
     logger.info(
-        f"  Debug folder: {run_dir}"
+        f"Saved automation artifacts: {tile_dir}"
     )
-
-
-# ============================================================
-# SAFE PATH HELPER
-# ============================================================
-
-def _safe_path_component(value: str, field_name: str) -> str:
-    """
-    Validate job_id / tile_id before using them as directory names.
-
-    This prevents path traversal such as:
-
-        ../../something
-
-    or:
-
-        ../
-
-    """
-
-    if value is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"{field_name} is required"
-        )
-
-    value = str(value).strip()
-
-    if not value:
-        raise HTTPException(
-            status_code=400,
-            detail=f"{field_name} cannot be empty"
-        )
-
-    if not re.fullmatch(
-        r"[A-Za-z0-9_.-]+",
-        value
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Invalid {field_name}. "
-                "Only letters, numbers, "
-                "underscore, hyphen and dot are allowed."
-            )
-        )
-
-    if value in {".", ".."}:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid {field_name}"
-        )
-
-    return value
 
 
 # ============================================================
@@ -311,10 +500,12 @@ async def health_check():
     """
 
     if inference is None:
+
         raise HTTPException(
             status_code=503,
             detail="Model not loaded"
         )
+
 
     return {
         "status": "healthy",
@@ -324,11 +515,366 @@ async def health_check():
 
 
 # ============================================================
-# AUTOMATION SCREENSHOT SAVE ENDPOINT
+# BASIC PREDICTION ENDPOINT
+# ============================================================
+
+@app.post("/predict")
+async def predict(
+    file: UploadFile = File(...),
+    threshold: float = 0.25,
+    return_mask: bool = False
+):
+    """
+    Predict farmland field regions.
+
+    This endpoint preserves the existing non-georeferenced
+    prediction behavior.
+    """
+
+    if inference is None:
+
+        raise HTTPException(
+            status_code=503,
+            detail="Model not loaded"
+        )
+
+
+    try:
+
+        # ----------------------------------------------------
+        # Read image
+        # ----------------------------------------------------
+
+        contents = await file.read()
+
+        nparr = np.frombuffer(
+            contents,
+            np.uint8
+        )
+
+        image = cv2.imdecode(
+            nparr,
+            cv2.IMREAD_COLOR
+        )
+
+
+        if image is None:
+
+            raise ValueError(
+                "Invalid image file"
+            )
+
+
+        h, w = image.shape[:2]
+
+
+        logger.info(
+            f"/predict image: {w}x{h}"
+        )
+
+
+        # ----------------------------------------------------
+        # Model inference
+        # ----------------------------------------------------
+
+        mask, debug_info = (
+            inference.predict(
+                image
+            )
+        )
+
+
+        logger.info(
+            f"Prediction shape: {mask.shape}"
+        )
+
+        logger.info(
+            "Prediction stats: "
+            f"min={mask.min():.4f}, "
+            f"max={mask.max():.4f}, "
+            f"mean={mask.mean():.4f}"
+        )
+
+
+        # ----------------------------------------------------
+        # Threshold
+        # ----------------------------------------------------
+
+        mask_binary = (
+            mask > threshold
+        ).astype(
+            np.uint8
+        ) * 255
+
+
+        # ----------------------------------------------------
+        # Convert boundary mask to field regions
+        # ----------------------------------------------------
+
+        field_mask = (
+            boundary_mask_to_field_regions(
+                mask_binary
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # Extract contours
+        # ----------------------------------------------------
+
+        contours = (
+            extract_contours(
+                field_mask
+            )
+        )
+
+
+        logger.info(
+            f"Found {len(contours)} contours"
+        )
+
+
+        # ----------------------------------------------------
+        # Convert to pixel-space GeoJSON
+        # ----------------------------------------------------
+
+        geojson_data = (
+            contours_to_geojson(
+                contours,
+                image_width=w,
+                image_height=h
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # Response
+        # ----------------------------------------------------
+
+        response_data = {
+
+            "geojson":
+                geojson_data,
+
+            "metadata": {
+
+                "image_width":
+                    w,
+
+                "image_height":
+                    h,
+
+                "num_contours":
+                    len(contours),
+
+                "threshold":
+                    threshold,
+
+                "filename":
+                    file.filename
+            }
+        }
+
+
+        # ----------------------------------------------------
+        # Optional mask
+        # ----------------------------------------------------
+
+        if return_mask:
+
+            _, buffer = cv2.imencode(
+                ".png",
+                field_mask
+            )
+
+            mask_b64 = (
+                base64
+                .b64encode(buffer)
+                .decode("utf-8")
+            )
+
+            response_data["mask"] = (
+                mask_b64
+            )
+
+
+        return JSONResponse(
+            content=response_data
+        )
+
+
+    except Exception as e:
+
+        logger.exception(
+            "Prediction error"
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Prediction failed: {str(e)}"
+        )
+
+
+# ============================================================
+# BATCH PREDICTION ENDPOINT
+# ============================================================
+
+@app.post("/predict-batch")
+async def predict_batch(
+    files: list[UploadFile] = File(...),
+    threshold: float = 0.25
+):
+    """
+    Predict on multiple images.
+    """
+
+    if inference is None:
+
+        raise HTTPException(
+            status_code=503,
+            detail="Model not loaded"
+        )
+
+
+    results = []
+
+
+    try:
+
+        for file in files:
+
+            # ------------------------------------------------
+            # Read image
+            # ------------------------------------------------
+
+            contents = await file.read()
+
+            nparr = np.frombuffer(
+                contents,
+                np.uint8
+            )
+
+            image = cv2.imdecode(
+                nparr,
+                cv2.IMREAD_COLOR
+            )
+
+
+            if image is None:
+
+                results.append({
+
+                    "filename":
+                        file.filename,
+
+                    "status":
+                        "error",
+
+                    "message":
+                        "Invalid image"
+                })
+
+                continue
+
+
+            h, w = image.shape[:2]
+
+
+            # ------------------------------------------------
+            # Inference
+            # ------------------------------------------------
+
+            mask, _ = (
+                inference.predict(
+                    image
+                )
+            )
+
+
+            mask_binary = (
+                mask > threshold
+            ).astype(
+                np.uint8
+            ) * 255
+
+
+            mask_clean = (
+                clean_boundary_mask(
+                    mask_binary
+                )
+            )
+
+
+            contours = (
+                extract_contours(
+                    mask_clean
+                )
+            )
+
+
+            geojson_data = (
+                contours_to_geojson(
+                    contours,
+                    image_width=w,
+                    image_height=h
+                )
+            )
+
+
+            results.append({
+
+                "filename":
+                    file.filename,
+
+                "status":
+                    "success",
+
+                "geojson":
+                    geojson_data,
+
+                "num_contours":
+                    len(contours),
+
+                "dimensions": {
+
+                    "width":
+                        w,
+
+                    "height":
+                        h
+                }
+            })
+
+
+        return JSONResponse(
+            content={
+                "results":
+                    results
+            }
+        )
+
+
+    except Exception as e:
+
+        logger.exception(
+            "Batch prediction error"
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Batch prediction failed: "
+                f"{str(e)}"
+            )
+        )
+
+
+# ============================================================
+# SAVE SCREENSHOT FOR AUTOMATION
 # ============================================================
 
 @app.post("/automation/save-screenshot")
-async def save_automation_screenshot(
+async def automation_save_screenshot(
     file: UploadFile = File(...),
 
     job_id: str = Form(...),
@@ -358,543 +904,55 @@ async def save_automation_screenshot(
     map_height: int = Form(0)
 ):
     """
-    Save a screenshot captured by the Chrome automation.
+    Save the full browser screenshot and tile metadata.
 
-    The screenshot is stored inside:
+    This endpoint is used by the Chrome automation.
+
+    The full screenshot is saved as:
 
         data/tiles/<job_id>/<tile_id>/screenshot.png
 
-    Additional capture information is stored in:
+    The actual map viewport crop is saved later as:
 
-        screenshot_metadata.json
-
-    Existing tile metadata.json is updated when available.
-
-    IMPORTANT:
-    This endpoint only stores the screenshot and capture metadata.
-
-    It does NOT perform model inference.
-
-    Model inference will be connected after the
-    screenshot-navigation stage is verified.
+        input.png
     """
 
-    logger.info(
-        "============================================================"
-    )
-
-    logger.info(
-        "AUTOMATION SCREENSHOT REQUEST"
-    )
-
-    logger.info(
-        f"job_id={job_id}"
-    )
-
-    logger.info(
-        f"tile_id={tile_id}"
-    )
-
-    logger.info(
-        f"requested center=({requested_lat}, {requested_lng})"
-    )
-
-    logger.info(
-        f"actual center=({actual_lat}, {actual_lng})"
-    )
-
-    logger.info(
-        f"zoom={zoom}"
-    )
-
-
-    # --------------------------------------------------------
-    # Validate identifiers
-    # --------------------------------------------------------
-
-    job_id = _safe_path_component(
-        job_id,
-        "job_id"
-    )
-
-    tile_id = _safe_path_component(
-        tile_id,
-        "tile_id"
-    )
-
-
-    # --------------------------------------------------------
-    # Validate tile bounds
-    # --------------------------------------------------------
-
-    if tile_north <= tile_south:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid tile bounds: "
-                "north must be greater than south"
-            )
-        )
-
-    if tile_east <= tile_west:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid tile bounds: "
-                "east must be greater than west"
-            )
-        )
-
-
-    # --------------------------------------------------------
-    # Validate image
-    # --------------------------------------------------------
-
     try:
+
+        # ----------------------------------------------------
+        # Get tile directory
+        # ----------------------------------------------------
+
+        tile_dir = _get_tile_dir(
+            job_id,
+            tile_id
+        )
+
+
+        if tile_dir is None:
+
+            raise ValueError(
+                "Invalid job_id or tile_id"
+            )
+
+
+        # ----------------------------------------------------
+        # Read screenshot
+        # ----------------------------------------------------
 
         contents = await file.read()
 
-    except Exception as e:
 
-        logger.error(
-            f"Failed to read screenshot upload: {e}"
-        )
+        if not contents:
 
-        raise HTTPException(
-            status_code=400,
-            detail="Failed to read screenshot upload"
-        )
-
-
-    if not contents:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Screenshot file is empty"
-        )
-
-
-    # Decode image to verify that the uploaded file
-    # is actually a valid image.
-
-    nparr = np.frombuffer(
-        contents,
-        dtype=np.uint8
-    )
-
-    image = cv2.imdecode(
-        nparr,
-        cv2.IMREAD_COLOR
-    )
-
-
-    if image is None:
-
-        logger.error(
-            "Uploaded screenshot could not be decoded"
-        )
-
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid screenshot image"
-        )
-
-
-    image_height_actual, image_width_actual = image.shape[:2]
-
-
-    logger.info(
-        f"Screenshot dimensions: "
-        f"{image_width_actual}x{image_height_actual}"
-    )
-
-
-    # --------------------------------------------------------
-    # Create tile directory
-    # --------------------------------------------------------
-
-    tile_dir = (
-        TILES_ROOT
-        / job_id
-        / tile_id
-    )
-
-    tile_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-
-    # --------------------------------------------------------
-    # Screenshot path
-    # --------------------------------------------------------
-
-    screenshot_path = (
-        tile_dir
-        / "screenshot.png"
-    )
-
-
-    # --------------------------------------------------------
-    # Save screenshot
-    # --------------------------------------------------------
-
-    with open(
-        screenshot_path,
-        "wb"
-    ) as f:
-
-        f.write(contents)
-
-
-    logger.info(
-        f"Screenshot saved: {screenshot_path}"
-    )
-
-
-    # --------------------------------------------------------
-    # Calculate center error
-    # --------------------------------------------------------
-
-    latitude_error = (
-        actual_lat
-        - requested_lat
-    )
-
-    longitude_error = (
-        actual_lng
-        - requested_lng
-    )
-
-
-    center_error = float(
-        (
-            latitude_error ** 2
-            +
-            longitude_error ** 2
-        ) ** 0.5
-    )
-
-
-    # --------------------------------------------------------
-    # Capture metadata
-    # --------------------------------------------------------
-
-    capture_time = (
-        datetime.utcnow()
-        .isoformat()
-        + "Z"
-    )
-
-
-    screenshot_metadata = {
-
-        "job_id": job_id,
-
-        "tile_id": tile_id,
-
-        "captured_at_utc": capture_time,
-
-        "screenshot": {
-            "filename": "screenshot.png",
-            "path": str(
-                screenshot_path.relative_to(
-                    PROJECT_ROOT
-                )
-            ),
-            "width": image_width_actual,
-            "height": image_height_actual,
-            "uploaded_filename": file.filename
-        },
-
-        "requested_map_state": {
-
-            "latitude": requested_lat,
-            "longitude": requested_lng,
-            "zoom": zoom
-        },
-
-        "actual_map_state": {
-
-            "latitude": actual_lat,
-            "longitude": actual_lng,
-            "zoom": zoom
-        },
-
-        "center_error": {
-
-            "latitude_error": latitude_error,
-
-            "longitude_error": longitude_error,
-
-            "euclidean_degree_error": center_error
-        },
-
-        "tile_bounds": {
-
-            "north": tile_north,
-
-            "south": tile_south,
-
-            "east": tile_east,
-
-            "west": tile_west
-        },
-
-        "map_viewport": {
-
-            "width": map_width,
-
-            "height": map_height
-        },
-
-        "status": "captured"
-    }
-
-
-    # --------------------------------------------------------
-    # Save screenshot_metadata.json
-    # --------------------------------------------------------
-
-    screenshot_metadata_path = (
-        tile_dir
-        / "screenshot_metadata.json"
-    )
-
-
-    with open(
-        screenshot_metadata_path,
-        "w",
-        encoding="utf-8"
-    ) as f:
-
-        json.dump(
-            screenshot_metadata,
-            f,
-            indent=2
-        )
-
-
-    logger.info(
-        "Screenshot metadata saved: "
-        f"{screenshot_metadata_path}"
-    )
-
-
-    # --------------------------------------------------------
-    # Update existing tile metadata.json
-    # --------------------------------------------------------
-
-    tile_metadata_path = (
-        tile_dir
-        / "metadata.json"
-    )
-
-
-    tile_metadata = {}
-
-
-    if tile_metadata_path.exists():
-
-        try:
-
-            with open(
-                tile_metadata_path,
-                "r",
-                encoding="utf-8"
-            ) as f:
-
-                tile_metadata = json.load(f)
-
-        except Exception as e:
-
-            logger.warning(
-                "Could not read existing metadata.json: "
-                f"{e}"
+            raise ValueError(
+                "Uploaded screenshot is empty"
             )
 
-            tile_metadata = {}
 
-
-    # Update capture information
-
-    tile_metadata["status"] = "captured"
-
-    tile_metadata["capture"] = {
-
-        "captured_at_utc": capture_time,
-
-        "requested_center": {
-
-            "lat": requested_lat,
-
-            "lng": requested_lng
-        },
-
-        "actual_center": {
-
-            "lat": actual_lat,
-
-            "lng": actual_lng
-        },
-
-        "zoom": zoom,
-
-        "center_error": center_error,
-
-        "image_width": image_width_actual,
-
-        "image_height": image_height_actual
-    }
-
-
-    # Preserve the existing structure if available.
-
-    if "files" not in tile_metadata:
-
-        tile_metadata["files"] = {}
-
-
-    tile_metadata["files"]["screenshot"] = (
-        "screenshot.png"
-    )
-
-
-    tile_metadata["files"][
-        "screenshot_metadata"
-    ] = "screenshot_metadata.json"
-
-
-    # Save metadata
-
-    try:
-
-        with open(
-            tile_metadata_path,
-            "w",
-            encoding="utf-8"
-        ) as f:
-
-            json.dump(
-                tile_metadata,
-                f,
-                indent=2
-            )
-
-        logger.info(
-            f"Tile metadata updated: "
-            f"{tile_metadata_path}"
-        )
-
-    except Exception as e:
-
-        logger.warning(
-            "Failed to update metadata.json: "
-            f"{e}"
-        )
-
-
-    # --------------------------------------------------------
-    # Final response
-    # --------------------------------------------------------
-
-    logger.info(
-        "AUTOMATION SCREENSHOT SAVED SUCCESSFULLY"
-    )
-
-    logger.info(
-        "============================================================"
-    )
-
-
-    return JSONResponse(
-        content={
-
-            "success": True,
-
-            "message": (
-                "Screenshot saved successfully"
-            ),
-
-            "job_id": job_id,
-
-            "tile_id": tile_id,
-
-            "screenshot": str(
-                screenshot_path.relative_to(
-                    PROJECT_ROOT
-                )
-            ),
-
-            "metadata": str(
-                screenshot_metadata_path.relative_to(
-                    PROJECT_ROOT
-                )
-            ),
-
-            "dimensions": {
-
-                "width": image_width_actual,
-
-                "height": image_height_actual
-            },
-
-            "requested_center": {
-
-                "lat": requested_lat,
-
-                "lng": requested_lng
-            },
-
-            "actual_center": {
-
-                "lat": actual_lat,
-
-                "lng": actual_lng
-            },
-
-            "center_error": center_error
-        }
-    )
-
-
-# ============================================================
-# PREDICTION ENDPOINT
-# ============================================================
-
-@app.post("/predict")
-async def predict(
-    file: UploadFile = File(...),
-    threshold: float = 0.25,
-    return_mask: bool = False
-):
-    """
-    Predict boundary mask and extract contours as GeoJSON.
-
-    Parameters:
-    - file: Satellite tile image (JPG, PNG)
-    - threshold: Confidence threshold for mask (0-1)
-    - return_mask: Whether to return base64 encoded mask image
-
-    Returns:
-    - geojson: GeoJSON FeatureCollection of boundary polygons
-    - metadata: Image dimensions and processing info
-    - mask (optional): Base64 encoded mask image
-    """
-
-    if inference is None:
-
-        raise HTTPException(
-            status_code=503,
-            detail="Model not loaded"
-        )
-
-
-    try:
-
-        contents = await file.read()
+        # ----------------------------------------------------
+        # Decode screenshot
+        # ----------------------------------------------------
 
         nparr = np.frombuffer(
             contents,
@@ -910,290 +968,174 @@ async def predict(
         if image is None:
 
             raise ValueError(
-                "Invalid image file"
+                "Uploaded file is not a valid image"
             )
 
 
-        h, w = image.shape[:2]
-
-
-        logger.info(
-            f"Processing image: {w}x{h}"
+        image_height, image_width = (
+            image.shape[:2]
         )
 
 
-        mask, debug_info = inference.predict(
+        # ----------------------------------------------------
+        # Save full screenshot
+        # ----------------------------------------------------
+
+        screenshot_path = (
+            tile_dir /
+            "screenshot.png"
+        )
+
+
+        success = cv2.imwrite(
+            str(screenshot_path),
             image
         )
 
 
-        logger.info(
-            f"Prediction shape: {mask.shape}"
-        )
+        if not success:
 
-        logger.info(
-            f"Prediction stats: "
-            f"min={mask.min():.4f}, "
-            f"max={mask.max():.4f}, "
-            f"mean={mask.mean():.4f}"
-        )
-
-
-        # ----------------------------------------------------
-        # Threshold
-        # ----------------------------------------------------
-
-        mask_binary = (
-            mask > threshold
-        ).astype(np.uint8) * 255
-
-
-        # ----------------------------------------------------
-        # Convert boundary mask to field regions
-        # ----------------------------------------------------
-
-        field_mask = (
-            boundary_mask_to_field_regions(
-                mask_binary
+            raise IOError(
+                "Failed to save screenshot.png"
             )
-        )
 
 
         # ----------------------------------------------------
-        # Extract contours
+        # Build metadata
         # ----------------------------------------------------
 
-        contours = extract_contours(
-            field_mask
-        )
+        metadata = {
 
+            "job_id":
+                job_id,
 
-        logger.info(
-            f"Found {len(contours)} contours"
-        )
+            "tile_id":
+                tile_id,
 
+            "requested_center": {
 
-        # ----------------------------------------------------
-        # Convert to pixel-space GeoJSON
-        # ----------------------------------------------------
+                "lat":
+                    requested_lat,
 
-        geojson_data = contours_to_geojson(
-            contours,
-            image_width=w,
-            image_height=h
-        )
+                "lng":
+                    requested_lng
+            },
 
+            "actual_center": {
 
-        # ----------------------------------------------------
-        # Response
-        # ----------------------------------------------------
+                "lat":
+                    actual_lat,
 
-        response_data = {
+                "lng":
+                    actual_lng
+            },
 
-            "geojson": geojson_data,
+            "zoom":
+                zoom,
 
-            "metadata": {
+            "tile_bounds": {
 
-                "image_width": w,
+                "north":
+                    tile_north,
 
-                "image_height": h,
+                "south":
+                    tile_south,
 
-                "num_contours": len(contours),
+                "east":
+                    tile_east,
 
-                "threshold": threshold,
+                "west":
+                    tile_west
+            },
 
-                "filename": file.filename
-            }
+            "map_dimensions": {
+
+                "width":
+                    map_width,
+
+                "height":
+                    map_height
+            },
+
+            "screenshot_dimensions": {
+
+                "width":
+                    image_width,
+
+                "height":
+                    image_height
+            },
+
+            "saved_at":
+                datetime.utcnow()
+                .isoformat()
         }
 
 
         # ----------------------------------------------------
-        # Optional mask
+        # Save metadata
         # ----------------------------------------------------
 
-        if return_mask:
-
-            import base64
-
-            _, buffer = cv2.imencode(
-                ".png",
-                field_mask
-            )
-
-            mask_b64 = base64.b64encode(
-                buffer
-            ).decode("utf-8")
-
-            response_data["mask"] = mask_b64
-
-
-        return JSONResponse(
-            content=response_data
+        metadata_path = (
+            tile_dir /
+            "metadata.json"
         )
 
 
-    except Exception as e:
-
-        logger.error(
-            f"Prediction error: {str(e)}"
-        )
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Prediction failed: {str(e)}"
-            )
+        _save_json(
+            metadata_path,
+            metadata
         )
 
 
-# ============================================================
-# BATCH PREDICTION ENDPOINT
-# ============================================================
-
-@app.post("/predict-batch")
-async def predict_batch(
-    files: list[UploadFile] = File(...),
-    threshold: float = 0.25
-):
-    """
-    Predict on multiple images.
-
-    Parameters:
-    - files: List of satellite tile images
-    - threshold: Confidence threshold for mask
-
-    Returns:
-    - results: List of prediction results for each image
-    """
-
-    if inference is None:
-
-        raise HTTPException(
-            status_code=503,
-            detail="Model not loaded"
+        logger.info(
+            f"Saved screenshot: "
+            f"{screenshot_path}"
         )
 
 
-    results = []
+        return {
 
+            "success":
+                True,
 
-    try:
+            "job_id":
+                job_id,
 
-        for file in files:
+            "tile_id":
+                tile_id,
 
-            contents = await file.read()
+            "screenshot":
+                str(
+                    screenshot_path
+                ),
 
-            nparr = np.frombuffer(
-                contents,
-                np.uint8
-            )
+            "metadata":
+                str(
+                    metadata_path
+                ),
 
-            image = cv2.imdecode(
-                nparr,
-                cv2.IMREAD_COLOR
-            )
+            "dimensions": {
 
+                "width":
+                    image_width,
 
-            if image is None:
-
-                results.append({
-
-                    "filename": file.filename,
-
-                    "status": "error",
-
-                    "message": "Invalid image"
-                })
-
-                continue
-
-
-            h, w = image.shape[:2]
-
-
-            # ------------------------------------------------
-            # Model inference
-            # ------------------------------------------------
-
-            mask, _ = inference.predict(
-                image
-            )
-
-
-            # ------------------------------------------------
-            # Threshold
-            # ------------------------------------------------
-
-            mask_binary = (
-                mask > threshold
-            ).astype(np.uint8) * 255
-
-
-            # ------------------------------------------------
-            # Clean mask
-            # ------------------------------------------------
-
-            mask_clean = clean_boundary_mask(
-                mask_binary
-            )
-
-
-            # ------------------------------------------------
-            # Extract contours
-            # ------------------------------------------------
-
-            contours = extract_contours(
-                mask_clean
-            )
-
-
-            # ------------------------------------------------
-            # Convert to GeoJSON
-            # ------------------------------------------------
-
-            geojson_data = contours_to_geojson(
-                contours,
-                image_width=w,
-                image_height=h
-            )
-
-
-            results.append({
-
-                "filename": file.filename,
-
-                "status": "success",
-
-                "geojson": geojson_data,
-
-                "num_contours": len(contours),
-
-                "dimensions": {
-
-                    "width": w,
-
-                    "height": h
-                }
-            })
-
-
-        return JSONResponse(
-            content={
-                "results": results
+                "height":
+                    image_height
             }
-        )
+        }
 
 
     except Exception as e:
 
-        logger.error(
-            f"Batch prediction error: {str(e)}"
+        logger.exception(
+            "Automation screenshot save failed"
         )
 
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Batch prediction failed: "
+                "Screenshot save failed: "
                 f"{str(e)}"
             )
         )
@@ -1223,17 +1165,37 @@ async def predict_georef(
 
     debug: bool = Form(False),
 
-    return_mask: bool = Form(False)
+    return_mask: bool = Form(False),
+
+    # --------------------------------------------------------
+    # Automation metadata
+    # --------------------------------------------------------
+
+    job_id: str | None = Form(None),
+
+    tile_id: str | None = Form(None)
 ):
     """
-    Predict boundaries and georeference polygons
-    using map bounds.
+    Predict farmland boundaries and georeference them.
 
-    Always saves debug images to:
+    The supplied geographic bounds MUST correspond to the
+    actual image being processed.
 
-        backend/app/debug_outputs/
+    For Chrome automation:
 
+        job_id = garoth_test
+        tile_id = tile_0000_0000
+
+    The endpoint saves normal FastAPI debug artifacts and,
+    when job_id/tile_id are supplied, also saves artifacts
+    directly under:
+
+        data/tiles/<job_id>/<tile_id>/
     """
+
+    # ========================================================
+    # MODEL CHECK
+    # ========================================================
 
     if inference is None:
 
@@ -1243,16 +1205,17 @@ async def predict_georef(
         )
 
 
-    # --------------------------------------------------------
-    # Validate geographic bounds
-    # --------------------------------------------------------
+    # ========================================================
+    # VALIDATE BOUNDS
+    # ========================================================
 
     if north <= south:
 
         raise HTTPException(
             status_code=400,
             detail=(
-                "Invalid map bounds provided"
+                "Invalid map bounds: "
+                "north must be greater than south"
             )
         )
 
@@ -1262,30 +1225,76 @@ async def predict_georef(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Invalid map bounds provided"
+                "Invalid map bounds: "
+                "east must be greater than west"
             )
         )
 
 
+    # ========================================================
+    # VALIDATE IMAGE DIMENSIONS
+    # ========================================================
+
+    if image_width <= 0:
+
+        raise HTTPException(
+            status_code=400,
+            detail="image_width must be greater than 0"
+        )
+
+
+    if image_height <= 0:
+
+        raise HTTPException(
+            status_code=400,
+            detail="image_height must be greater than 0"
+        )
+
+
+    # ========================================================
+    # BUILD BOUNDS
+    # ========================================================
+
     bounds = {
 
-        "north": north,
+        "north":
+            north,
 
-        "south": south,
+        "south":
+            south,
 
-        "east": east,
+        "east":
+            east,
 
-        "west": west
+        "west":
+            west
     }
+
+
+    # ========================================================
+    # TILE DIRECTORY
+    # ========================================================
+
+    tile_dir = _get_tile_dir(
+        job_id,
+        tile_id
+    )
 
 
     try:
 
         # ====================================================
-        # Read image
+        # READ IMAGE
         # ====================================================
 
         contents = await file.read()
+
+
+        if not contents:
+
+            raise ValueError(
+                "Uploaded image is empty"
+            )
 
 
         nparr = np.frombuffer(
@@ -1311,38 +1320,94 @@ async def predict_georef(
 
 
         logger.info(
-            f"Processing image: {w}x{h}"
+            "========================================"
+        )
+
+        logger.info(
+            "GEOREFERENCED PREDICTION"
+        )
+
+        logger.info(
+            "========================================"
+        )
+
+        logger.info(
+            f"Image dimensions: {w}x{h}"
+        )
+
+        logger.info(
+            f"Requested map dimensions: "
+            f"{image_width}x{image_height}"
+        )
+
+        logger.info(
+            f"Bounds: {bounds}"
+        )
+
+        logger.info(
+            f"job_id: {job_id}"
+        )
+
+        logger.info(
+            f"tile_id: {tile_id}"
         )
 
 
         # ====================================================
-        # Create debug folder
+        # SAVE INPUT TO AUTOMATION TILE DIRECTORY
+        # ====================================================
+
+        if tile_dir is not None:
+
+            input_path = (
+                tile_dir /
+                "input.png"
+            )
+
+
+            cv2.imwrite(
+                str(input_path),
+                image
+            )
+
+
+            logger.info(
+                f"Saved automation input: "
+                f"{input_path}"
+            )
+
+
+        # ====================================================
+        # CREATE DEBUG DIRECTORY
         # ====================================================
 
         run_dir = _create_debug_dir()
 
 
         logger.info(
-            f"Debug folder created: {run_dir}"
+            f"Debug folder: {run_dir}"
         )
 
 
         # ====================================================
-        # Model inference
+        # MODEL INFERENCE
         # ====================================================
 
-        mask, debug_info = inference.predict(
-            image
+        mask, debug_info = (
+            inference.predict(
+                image
+            )
         )
 
 
         logger.info(
-            f"Prediction shape: {mask.shape}"
+            f"Prediction shape: "
+            f"{mask.shape}"
         )
 
 
         logger.info(
-            f"Prediction stats: "
+            "Prediction stats: "
             f"min={mask.min():.4f}, "
             f"max={mask.max():.4f}, "
             f"mean={mask.mean():.4f}"
@@ -1350,16 +1415,18 @@ async def predict_georef(
 
 
         # ====================================================
-        # Apply threshold
+        # THRESHOLD
         # ====================================================
 
         mask_binary = (
             mask > threshold
-        ).astype(np.uint8) * 255
+        ).astype(
+            np.uint8
+        ) * 255
 
 
         # ====================================================
-        # Extract field regions
+        # FIELD REGIONS
         # ====================================================
 
         field_mask = (
@@ -1370,11 +1437,10 @@ async def predict_georef(
 
 
         # ====================================================
-        # Save debug images
+        # SAVE NORMAL DEBUG IMAGES
         # ====================================================
 
         _save_debug_images(
-
             run_dir=run_dir,
 
             original=image,
@@ -1388,7 +1454,7 @@ async def predict_georef(
 
 
         # ====================================================
-        # Threshold variants
+        # OPTIONAL THRESHOLD VARIANTS
         # ====================================================
 
         if debug:
@@ -1402,32 +1468,33 @@ async def predict_georef(
 
                 t_mask = (
                     mask > t
-                ).astype(np.uint8) * 255
+                ).astype(
+                    np.uint8
+                ) * 255
 
 
                 cv2.imwrite(
-
                     str(
-                        run_dir
-                        / f"threshold_{int(t * 100)}.png"
+                        run_dir /
+                        f"threshold_{int(t * 100)}.png"
                     ),
-
                     t_mask
                 )
 
 
             logger.info(
-                "Saved threshold variants "
-                "(debug=True)"
+                "Saved threshold variants"
             )
 
 
         # ====================================================
-        # Extract contours
+        # EXTRACT CONTOURS
         # ====================================================
 
-        contours = extract_contours(
-            field_mask
+        contours = (
+            extract_contours(
+                field_mask
+            )
         )
 
 
@@ -1437,28 +1504,27 @@ async def predict_georef(
 
 
         # ====================================================
-        # Draw overlay
+        # DRAW CONTOUR OVERLAY
         # ====================================================
 
-        overlay = draw_contours_overlay(
+        overlay = (
+            draw_contours_overlay(
+                image,
+                contours,
+                color=(0, 0, 255),
+                thickness=2
+            )
+        )
 
-            image,
 
-            contours,
-
-            color=(0, 0, 255),
-
-            thickness=2
+        overlay_path = (
+            run_dir /
+            "contours_overlay.png"
         )
 
 
         cv2.imwrite(
-
-            str(
-                run_dir
-                / "contours_overlay.png"
-            ),
-
+            str(overlay_path),
             overlay
         )
 
@@ -1469,12 +1535,29 @@ async def predict_georef(
 
 
         # ====================================================
-        # Convert contours to geographic GeoJSON
+        # SAVE OVERLAY TO AUTOMATION TILE
+        # ====================================================
+
+        if tile_dir is not None:
+
+            tile_overlay_path = (
+                tile_dir /
+                "contours_overlay.png"
+            )
+
+
+            cv2.imwrite(
+                str(tile_overlay_path),
+                overlay
+            )
+
+
+        # ====================================================
+        # CONVERT TO GEOGRAPHIC GEOJSON
         # ====================================================
 
         geojson_data = (
             contours_to_geojson_geographic(
-
                 contours,
 
                 image_width=image_width,
@@ -1487,63 +1570,171 @@ async def predict_georef(
 
 
         # ====================================================
-        # Response
+        # AUTOMATION ARTIFACTS
+        # ====================================================
+
+        prediction_metadata = {
+
+            "job_id":
+                job_id,
+
+            "tile_id":
+                tile_id,
+
+            "image_width":
+                w,
+
+            "image_height":
+                h,
+
+            "map_width":
+                image_width,
+
+            "map_height":
+                image_height,
+
+            "bounds":
+                bounds,
+
+            "threshold":
+                threshold,
+
+            "num_contours":
+                len(contours),
+
+            "filename":
+                file.filename,
+
+            "debug":
+                debug,
+
+            "debug_folder":
+                str(run_dir),
+
+            "created_at":
+                datetime.utcnow()
+                .isoformat()
+        }
+
+
+        if tile_dir is not None:
+
+            # -----------------------------------------------
+            # prediction.geojson
+            # -----------------------------------------------
+
+            _save_json(
+                tile_dir /
+                "prediction.geojson",
+                geojson_data
+            )
+
+
+            # -----------------------------------------------
+            # probability.png
+            # -----------------------------------------------
+
+            probability_visual = (
+                np.clip(
+                    mask,
+                    0.0,
+                    1.0
+                ) * 255
+            ).astype(np.uint8)
+
+
+            cv2.imwrite(
+                str(
+                    tile_dir /
+                    "probability.png"
+                ),
+                probability_visual
+            )
+
+
+            # -----------------------------------------------
+            # mask.png
+            # -----------------------------------------------
+
+            cv2.imwrite(
+                str(
+                    tile_dir /
+                    "mask.png"
+                ),
+                mask_binary
+            )
+
+
+            # -----------------------------------------------
+            # mask_refined.png
+            # -----------------------------------------------
+
+            cv2.imwrite(
+                str(
+                    tile_dir /
+                    "mask_refined.png"
+                ),
+                field_mask
+            )
+
+
+            # -----------------------------------------------
+            # prediction_metadata.json
+            # -----------------------------------------------
+
+            _save_json(
+                tile_dir /
+                "prediction_metadata.json",
+                prediction_metadata
+            )
+
+
+            logger.info(
+                "Saved all automation prediction "
+                f"artifacts to: {tile_dir}"
+            )
+
+
+        # ====================================================
+        # RESPONSE
         # ====================================================
 
         response_data = {
 
-            "geojson": geojson_data,
+            "geojson":
+                geojson_data,
 
-            "metadata": {
-
-                "image_width": w,
-
-                "image_height": h,
-
-                "map_width": image_width,
-
-                "map_height": image_height,
-
-                "bounds": bounds,
-
-                "num_contours": len(contours),
-
-                "threshold": threshold,
-
-                "filename": file.filename,
-
-                "debug_folder": str(run_dir)
-            }
+            "metadata":
+                prediction_metadata
         }
 
 
         # ====================================================
-        # Optional field mask
+        # OPTIONAL MASK IN RESPONSE
         # ====================================================
 
         if return_mask:
 
-            import base64
-
-
             _, buffer = cv2.imencode(
-
                 ".png",
-
                 field_mask
             )
 
 
             mask_b64 = (
-                base64.b64encode(
+                base64
+                .b64encode(
                     buffer
-                ).decode("utf-8")
+                )
+                .decode(
+                    "utf-8"
+                )
             )
 
 
-            response_data["mask"] = (
-                mask_b64
-            )
+            response_data[
+                "mask"
+            ] = mask_b64
 
 
         return JSONResponse(
@@ -1553,18 +1744,15 @@ async def predict_georef(
 
     except Exception as e:
 
-        logger.error(
-            "Georeference prediction error: "
-            f"{str(e)}"
+        logger.exception(
+            "Georeference prediction error"
         )
 
 
         raise HTTPException(
-
             status_code=400,
-
             detail=(
-                f"Prediction failed: "
+                "Prediction failed: "
                 f"{str(e)}"
             )
         )
@@ -1590,29 +1778,23 @@ async def model_info():
 
     return {
 
-        "model_type": "SegFormer-B2",
+        "model_type":
+            "SegFormer-B2",
 
-        "input_format": "ONNX",
+        "input_format":
+            "ONNX",
 
-        "input_shape": [
-            1,
-            3,
-            512,
-            512
-        ],
+        "input_shape":
+            [1, 3, 512, 512],
 
-        "output_shape": [
-            1,
-            2,
-            128,
-            128
-        ],
+        "output_shape":
+            [1, 2, 128, 128],
 
-        "task": (
-            "Farmland field region segmentation"
-        ),
+        "task":
+            "Farmland field region segmentation",
 
-        "model_path": ONNX_PATH
+        "model_path":
+            ONNX_PATH
     }
 
 
