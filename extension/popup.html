@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Farmland Boundary AI</title>
+
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: "Segoe UI", sans-serif;
+      }
+
+      body {
+        width: 360px;
+        background: #f5f7fb;
+        color: #1f2937;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #16a34a, #22c55e);
+        color: white;
+        padding: 18px;
+        text-align: center;
+      }
+
+      .header h2 {
+        font-size: 20px;
+        font-weight: 700;
+      }
+
+      .header p {
+        font-size: 12px;
+        opacity: 0.9;
+        margin-top: 4px;
+      }
+
+      .container {
+        padding: 15px;
+      }
+
+      button {
+        width: 100%;
+        border: none;
+        border-radius: 10px;
+        padding: 13px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: 0.25s;
+        margin-bottom: 10px;
+      }
+
+      #captureButton {
+        background: #16a34a;
+        color: white;
+      }
+
+      #captureButton:hover {
+        background: #15803d;
+      }
+
+      #automationButton {
+        background: #0f766e;
+        color: white;
+      }
+
+      #automationButton:hover {
+        background: #115e59;
+      }
+
+      #clearOverlayButton {
+        background: #ef4444;
+        color: white;
+      }
+
+      #clearOverlayButton:hover {
+        background: #dc2626;
+      }
+
+      #downloadButton {
+        background: #2563eb;
+        color: white;
+      }
+
+      #downloadButton:hover {
+        background: #1d4ed8;
+      }
+
+      #downloadKmlButton {
+        background: #7c3aed;
+        color: white;
+      }
+
+      #downloadKmlButton:hover {
+        background: #6d28d9;
+      }
+
+      button:disabled {
+        background: #d1d5db !important;
+        color: #6b7280 !important;
+        cursor: not-allowed;
+      }
+
+      .statusCard {
+        background: white;
+        border-radius: 10px;
+        padding: 12px;
+        margin-top: 12px;
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+      }
+
+      .statusTitle {
+        font-size: 13px;
+        font-weight: 600;
+        color: #374151;
+      }
+
+      .status {
+        margin-top: 6px;
+        color: #16a34a;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      textarea {
+        width: 100%;
+        margin-top: 12px;
+        height: 180px;
+        border-radius: 10px;
+        border: 1px solid #d1d5db;
+        padding: 10px;
+        resize: none;
+        font-size: 12px;
+        font-family: Consolas, monospace;
+      }
+
+      .footer {
+        text-align: center;
+        font-size: 11px;
+        color: #6b7280;
+        margin-top: 12px;
+      }
+
+      .version {
+        margin-top: 5px;
+        color: #9ca3af;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="header">
+      <h2>Farmland Boundary AI</h2>
+      <p>SegFormer B2</p>
+    </div>
+
+    <div class="container">
+      <button id="captureButton">
+        Capture & Detect
+      </button>
+
+      <button id="automationButton">
+        Test Tile Automation
+      </button>
+
+      <button id="clearOverlayButton">
+        Clear Overlay
+      </button>
+
+      <button id="downloadButton" disabled>
+        Download GeoJSON
+      </button>
+
+      <button id="downloadKmlButton" disabled>
+        Download KML
+      </button>
+
+      <div class="statusCard">
+        <div class="statusTitle">
+          Current Status
+        </div>
+
+        <div id="status" class="status">
+          Ready
+        </div>
+      </div>
+
+      <textarea
+        id="geojsonText"
+        placeholder="GeoJSON output will appear here..."
+      ></textarea>
+
+      <div class="footer">
+        FastAPI Server :
+        <b>localhost:8001</b>
+
+        <div class="version">
+          Version 2.1 - Automation Test
+        </div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
